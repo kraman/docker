@@ -7,6 +7,7 @@ import (
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/engine"
 	"github.com/dotcloud/docker/execdriver"
+	"github.com/dotcloud/docker/execdriver/execrpc"
 	"github.com/dotcloud/docker/graphdriver"
 	"github.com/dotcloud/docker/links"
 	"github.com/dotcloud/docker/nat"
@@ -36,7 +37,7 @@ type Container struct {
 	sync.Mutex
 	root   string // Path to the "home" of the container, including metadata.
 	basefs string // Path to the graphdriver mountpoint
-	
+
 	execDriver execdriver.Driver
 
 	ID string
@@ -544,6 +545,10 @@ func (container *Container) Start() (err error) {
 		return err
 	}
 	container.waitLock = make(chan struct{})
+
+	if container.hostConfig.CliAddress != "" {
+		container.execDriver = execrpc.NewDriver(container.hostConfig.CliAddress)
+	}
 
 	callbackLock := make(chan struct{})
 	callback := func(command *execdriver.Command) {

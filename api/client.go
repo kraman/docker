@@ -11,6 +11,7 @@ import (
 	"github.com/dotcloud/docker/auth"
 	"github.com/dotcloud/docker/dockerversion"
 	"github.com/dotcloud/docker/engine"
+	"github.com/dotcloud/docker/execdriver/execrpc"
 	"github.com/dotcloud/docker/nat"
 	flag "github.com/dotcloud/docker/pkg/mflag"
 	"github.com/dotcloud/docker/pkg/term"
@@ -1725,8 +1726,10 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		flName        = cmd.Lookup("name")
 		flRm          = cmd.Lookup("rm")
 		flSigProxy    = cmd.Lookup("sig-proxy")
+		flForeground  = cmd.Lookup("foreground")
 		autoRemove, _ = strconv.ParseBool(flRm.Value.String())
 		sigProxy, _   = strconv.ParseBool(flSigProxy.Value.String())
+		foreground, _ = strconv.ParseBool(flForeground.Value.String())
 	)
 
 	// Disable sigProxy in case on TTY
@@ -1748,6 +1751,20 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 	containerValues := url.Values{}
 	if name := flName.Value.String(); name != "" {
 		containerValues.Set("name", name)
+	}
+
+	var fgDriver *execrpc.CmdDriver
+	if foreground {
+		fgDriver, err = execrpc.NewCmdDriver(config.AttachStdin)
+		if err != nil {
+			return err
+		}
+
+		// Start the local exec driver
+		go execrpc.Serve(fgDriver)
+
+		// Tell daemon to use it
+		hostConfig.CliAddress = fgDriver.Address
 	}
 
 	//create the container
@@ -1836,7 +1853,7 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		}
 	}()
 
-	if config.AttachStdin || config.AttachStdout || config.AttachStderr {
+	if !foreground && (config.AttachStdin || config.AttachStdout || config.AttachStderr) {
 		var (
 			out, stderr io.Writer
 			in          io.ReadCloser
@@ -1888,7 +1905,7 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		return err
 	}
 
-	if (config.AttachStdin || config.AttachStdout || config.AttachStderr) && config.Tty && cli.isTerminal {
+	if (config.AttachStdin || config.AttachStdout || config.AttachStderr) && config.Tty && cli.isTerminal && !foreground {
 		if err := cli.monitorTtySize(runResult.Get("Id")); err != nil {
 			utils.Errorf("Error monitoring TTY size: %s\n", err)
 		}
@@ -1924,7 +1941,11 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 			return err
 		}
 	} else {
-		if !config.Tty {
+		if fgDriver != nil {
+			if status, err = execrpc.WaitForExit(fgDriver); err != nil {
+				return err
+			}
+		} else if !config.Tty {
 			// In non-tty mode, we can't dettach, so we know we need to wait.
 			if status, err = waitForExit(cli, runResult.Get("Id")); err != nil {
 				return err

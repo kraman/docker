@@ -7,6 +7,7 @@ import (
 	"github.com/dotcloud/docker/dockerversion"
 	"github.com/dotcloud/docker/engine"
 	"github.com/dotcloud/docker/execdriver"
+	"github.com/dotcloud/docker/execdriver/execrpc"
 	"github.com/dotcloud/docker/execdriver/lxc"
 	"github.com/dotcloud/docker/execdriver/native"
 	"github.com/dotcloud/docker/graphdriver"
@@ -138,6 +139,10 @@ func (runtime *Runtime) Register(container *Container) error {
 	container.execDriver = runtime.execDriver
 	container.runtime = runtime
 
+	if container.hostConfig.CliAddress != "" {
+		container.execDriver = execrpc.NewDriver(container.hostConfig.CliAddress)
+	}
+
 	// Attach to stdout and stderr
 	container.stderr = utils.NewWriteBroadcaster()
 	container.stdout = utils.NewWriteBroadcaster()
@@ -155,7 +160,7 @@ func (runtime *Runtime) Register(container *Container) error {
 	//        if so, then we need to restart monitor and init a new lock
 	// If the container is supposed to be running, make sure of it
 	if container.State.IsRunning() {
-		info := runtime.execDriver.Info(container.ID)
+		info := container.execDriver.Info(container.ID)
 
 		if !info.IsRunning() {
 			utils.Debugf("Container %s was supposed to be running but is not.", container.ID)
